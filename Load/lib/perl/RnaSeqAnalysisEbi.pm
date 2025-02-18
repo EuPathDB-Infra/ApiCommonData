@@ -111,6 +111,7 @@ sub makeProfiles {
 
     # cleanup for non unique
     if(!$isUnique) {
+      $valueType = "nonunique.$valueType";
       $makePercentiles = 0;
     }
 
@@ -128,6 +129,8 @@ sub makeProfiles {
 	     samples => $samples,
 	     profileSetName => $profileSetName,
          sampleNameAsDir => 1,
+         isUnique => $isUnique,
+         strand => $strand,
 	    });
 
     my $header = 0;

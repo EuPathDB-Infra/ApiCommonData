@@ -15,6 +15,10 @@ sub getConfigFilePath {
     return $_[0]->{_config_file_path};
 }
 
+sub getIsUnique { $_[0]->{isUnique} }
+
+sub getStrand { $_[0]->{strand} }
+
 sub getTpmFile { $_[0]->{tpmFile} }
 sub setTpmFile { $_[0]->{tpmFile} = $_[1] }
 
@@ -44,6 +48,8 @@ sub writeRScript {
     my ($rfh, $rFile) = tempfile();
     my $makePercentiles = $self->getMakePercentiles() ? "TRUE" : "FALSE";
     my $makeStandardError = $self->getMakeStandardError() ? "TRUE" : "FALSE";
+    # we only want to load raw counts for unique profiles
+    my $makeRawCounts = $self->getIsUnique() ? "TRUE" : "FALSE";
 
     my $findMedian = $self->getFindMedian() ? "TRUE" : "FALSE";
     my $isLogged = $self->getIsLogged() ? "TRUE" : "FALSE";
@@ -78,16 +84,18 @@ if ($makePercentiles) {
 }
 
 # now sample Count values
-dat.count = read.table("$countFile", header=T, sep="\\t", check.names=FALSE);
+if ($makeRawCounts) {
+    dat.count = read.table("$countFile", header=T, sep="\\t", check.names=FALSE);
 
-#filter out additional rows added by htseq-count
-dat.count = dat.count[!grepl("^__", dat.count\$U_ID),]
+    #filter out additional rows added by htseq-count
+    dat.count = dat.count[!grepl("^__", dat.count\$U_ID),]
 
-# ensure that the genes are in the same order as the TPM
-dat.count = dat.count[order(match(dat.count\$U_ID, dat\$U_ID)), , drop=FALSE] 
+    # ensure that the genes are in the same order as the TPM
+    dat.count = dat.count[order(match(dat.count\$U_ID, dat\$U_ID)), , drop=FALSE]
 
-reorderedCounts = reorderAndGetColCentralVal(pl=dat.samples, df=dat.count, computeMedian=$findMedian);
-write.table(reorderedCounts\$data, file="$countOutputFile", quote=F, sep="\\t", row.names=reorderedCounts\$id, col.names=NA);
+    reorderedCounts = reorderAndGetColCentralVal(pl=dat.samples, df=dat.count, computeMedian=$findMedian);
+    write.table(reorderedCounts\$data, file="$countOutputFile", quote=F, sep="\\t", row.names=reorderedCounts\$id, col.names=NA);
+}
 
 
 ### Here we make individual files
@@ -103,9 +111,11 @@ for (i in 1:ncol(reorderedSamples\$data)) {
     colnames(sample) = c("value");
 
     # add the averaged but otherwise raw count data
-    countSample = as.matrix(reorderedCounts\$data[,i]);
-    colnames(countSample) = c("mean_raw_count");
-    sample = cbind(sample, countSample);
+    if ($makeRawCounts) {
+        countSample = as.matrix(reorderedCounts\$data[,i]);
+        colnames(countSample) = c("mean_raw_count");
+        sample = cbind(sample, countSample);
+    }
 
     if ($makeStandardError) {
         stdErrSample = as.matrix(reorderedSamples\$stdErr[,i]);
@@ -190,15 +200,16 @@ sub writeDataHash {
 sub createEDACountsFile {
     my ($self) = @_;
 
+    my $strand = $self->getStrand();
     my $mainDirectory = $self->getMainDirectory();
-    my $edaFile = "$mainDirectory/analysis_output/countsForEda.txt";
+    my $edaFile = "$mainDirectory/analysis_output/countsForEda_$strand.txt";
     open (EDA, ">$edaFile") or die "Cannot  open $edaFile for writing\n$!\n";
 
     my $countHash = $self->{dataHash}->{counts};
 
     # in this context, a "sample" is an individual replicate
     my $samples = $self->getHeaders();
-    #TODO I think Bob had some text in this empty cell
+
     print EDA "\t";
     print EDA join("\t", @$samples), "\n";
  
@@ -222,20 +233,30 @@ sub createEDACountsFile {
 sub munge {
     my ($self) = @_;
 
+    my $isUnique = $self->getIsUnique();
+
     $self->readDataHash();
 
     my $tpmFile = $self->writeDataHash("TPM");
-    my $countFile = $self->writeDataHash("counts");
     $self->setTpmFile($tpmFile);
-    $self->setCountFile($countFile);
 
+    # only want to load counts for unique profiles
+    my $countFile;
+    if ($isUnique) {
+        $countFile = $self->writeDataHash("counts");
+        $self->setCountFile($countFile);
+    }
 
     $self->SUPER::munge();
     
     unlink($tpmFile);
-    unlink($countFile);
+    if ($isUnique) {
+        unlink($countFile);
+    }
     
-    $self->createEDACountsFile();
+    if ($isUnique) {
+        $self->createEDACountsFile();
+    }
     
 }   
 
